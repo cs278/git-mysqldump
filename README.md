@@ -8,7 +8,7 @@ A few words of warning:
 * First off this hasn't had extensive testing. It works for me, but as always
   YMMV. Remember an untested backup is *not* a backup!
 * There won't be any consistency between databases, however tables in the same
-  database *should* be consitent.
+  database *should* be consistent.
 
 Requirements
 ------------
