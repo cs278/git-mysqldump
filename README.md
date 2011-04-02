@@ -14,6 +14,7 @@ Requirements
 ------------
 * Git >= 1.4.4
 * bash >= 4.0.0
+* mysql >= 5.0.26
 
 Usage
 -----
