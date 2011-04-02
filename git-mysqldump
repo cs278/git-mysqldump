@@ -1,0 +1,296 @@
+#!/bin/bash
+#
+# Copyright (C) 2011 by Chris Smith
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+CONFIG_NS=mysqldump
+
+require_gitenv()
+{
+	git ls-files >/dev/null || exit 1
+}
+
+get_cnf()
+{
+	echo $(git config --get $CONFIG_NS.conffile || echo "/dev/null");
+}
+
+ping()
+{
+	mysqladmin --defaults-extra-file="$(get_cnf)" ping &>/dev/null
+
+	return $?
+}
+
+get_databases()
+{
+	echo 'SHOW DATABASES;' | mysql --defaults-extra-file="$(get_cnf)" | sed '1d;/information_schema/d'
+}
+
+case "$1" in
+	init)
+		MODE=init
+
+		shift
+		
+		git init
+		git mysqldump config $@ || exit 1
+
+		exit 0
+	;;
+	config)
+		require_gitenv
+
+		MODE=config
+
+		shift
+
+		usage()
+		{
+			echo "Usage:" >&2
+			echo "" >&2
+			echo -e "\tgit mysqldump config -c <file>" >&2
+			echo -e "\tgit mysqldump config [-c <file>] -a" >&2
+			echo -e "\tgit mysqldump config [-c <file>] [-t] database1 [database2 [...]]" >&2
+			echo "" >&2
+			echo -e "\tOptions:" >&2
+			echo -e "\t-a\tBackup all databases, implies -t." >&2
+			echo -e "\t-t\tTruncate database list." >&2
+			echo -e "\t-c\tMySQL configuration file." >&2
+		}
+
+		while getopts "atc:h" OPT;
+		do
+			case $OPT in
+				h)
+					# Call usage but write the text to stdout
+					usage 2>&1
+					exit 0
+				;;
+				a)
+					DB_ALL=1
+					DB_TRUNCATE=1
+					shift
+				;;
+				t)
+					DB_TRUNCATE=1
+					shift
+				;;
+				c)
+					CNF="$OPTARG"
+					shift 2
+				;;
+			esac
+		done
+
+		if [ -n "$1" ] || [ -n "$DB_ALL" ];
+		then
+			DB=1
+		fi
+
+		if [ -z "$DB" ] && [ -z "$CNF" ];
+		then
+			usage
+			exit 1
+		fi
+
+		if [ -n "$DB_TRUNCATE" ] && [ -z "$DB" ];
+		then
+			usage
+			exit 1
+		fi
+
+		# <http://www.viget.com/extend/backup-your-database-in-git/#8847>
+		git config core.compression 9
+		git config repack.usedeltabaseoffset true
+		git config pack.windowMemory 100M
+		git config pack.window 15
+		git config gc.auto 1000
+		git config gc.autopacklimit 10
+
+		if [ -n "$CNF" ];
+		then
+			git config $CONFIG_NS.conffile "$CNF"
+		fi
+
+		if [ -n "$DB_TRUNCATE" ];
+		then
+			git config --unset-all $CONFIG_NS.database
+		fi
+
+		if [ -n "$DB_ALL" ];
+		then
+			git config --unset-all $CONFIG_NS.database
+			git config $CONFIG_NS.database true
+		elif [ -n "$1" ];
+		then
+			git config --unset $CONFIG_NS.database ^true$
+
+			while [ -n "$1" ];
+			do
+				# Selective adds, cheating a bit I'm sure
+				git config --unset-all $CONFIG_NS.database "^$1\$"
+				git config --add $CONFIG_NS.database "$1"
+
+				shift
+			done
+		fi
+
+		exit 0
+	;;
+	ls-db)
+		require_gitenv
+
+		get_databases
+
+		exit 0
+	;;
+	test)
+		require_gitenv
+
+		ping
+
+		if [ $? -eq 0 ];
+		then
+			echo "MySQL is alive."
+			exit 0
+		else
+			echo "MySQL is dead."
+			exit 1
+		fi
+	;;
+	backup)
+		shift
+
+		MODE=backup
+		MESSAGE="$@"
+	;;
+	*)
+		MODE=backup
+		MESSAGE="$@"
+	;;
+esac
+
+require_gitenv
+
+CNF=$(get_cnf)
+
+if [ ! -r "$CNF" ] || [ -d "$CNF" ];
+then
+	echo "'$CNF' could not be read, or is a directory." >&2
+	exit 1
+fi
+
+if [ -z "$MESSAGE" ];
+then
+	echo "Commit message cannot be empty." >&2
+	exit 1
+fi
+
+cleanup()
+{
+	git clean -fdq
+	git ls-files -z | xargs -0 --no-run-if-empty rm -f
+}
+
+stage()
+{
+	git add -A
+	git ls-files --deleted -z | xargs -0 --no-run-if-empty git rm -qf
+}
+
+if [ "$(git config --bool --get $CONFIG_NS.database 2>/dev/null || echo false)" = "true" ];
+then
+	DATABASES=$(get_databases "$CNF") || exit 1
+else
+	DATABASES=$(git config --get-all $CONFIG_NS.database 2>/dev/null) || exit 1
+fi
+
+cleanup
+
+for database in $DATABASES;
+do
+	echo $database;
+
+	mysqldump --defaults-extra-file="$CNF" --skip-extended-insert --force --flush-privileges --comments --skip-add-drop-table --add-locks --order-by-primary $database 2>/dev/null | (
+		header=( )
+		footer=( )
+		files=( )
+		started=
+
+		mkdir -p "$database"
+
+		while read line;
+		do
+			if [[ "${line:0:30}" = '-- Table structure for table `' ]];
+			then
+				started=1
+				table=${line:30:(( ${#line} - 30 - 1 ))};
+				file="$database/$table.sql"
+				files+=( "$file" )
+
+				>$file
+
+				for hline in "${header[@]}"
+				do
+					echo $hline >> $file
+				done
+			fi
+
+			if [[ -z $table ]];
+			then
+				if [[ ${line:0:2} = '/*' ]];
+				then
+					if [[ -z $started ]];
+					then
+						#echo "header: $line"
+						header+=( "$line" )
+					else
+						footer+=( "$line" )
+						#echo "footer: $line"
+					fi
+				fi
+			else
+				if [[ ${#line} -gt 0 ]] && [[ "${line:0:2}" != '--' ]];
+				then
+					echo "$line" >> $file
+				fi
+			fi
+
+			if [[ "${line:0:14}" = 'UNLOCK TABLES;' ]];
+			then
+				table=
+			fi
+		done
+
+		for file in "${files[@]}";
+		do
+			for line in "${footer[@]}";
+			do
+				echo $line >> $file
+			done
+		done
+	) >&2
+done
+
+stage
+
+git status >/dev/null || exit 0 && git commit -qm "$MESSAGE"
+git gc --auto
