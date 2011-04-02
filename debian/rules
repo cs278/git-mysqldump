@@ -1,0 +1,5 @@
+#!/usr/bin/make -f
+
+# fakeroot debian/rules debian/control DEB_AUTO_UPDATE_DEBIAN_CONTROL:=yes
+
+include /usr/share/cdbs/1/rules/debhelper.mk

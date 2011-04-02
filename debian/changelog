@@ -1,0 +1,5 @@
+git-mysqldump (1.1-1) unstable; urgency=low
+
+  * Initial Release.
+
+ -- Chris Smith <chris@cs278.org>  Sat, 02 Apr 2011 22:24:03 +0100

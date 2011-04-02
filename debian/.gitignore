@@ -1,0 +1,5 @@
+control
+files
+*.debhelper.log
+*.substvars
+git-mysqldump/

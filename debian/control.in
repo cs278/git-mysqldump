@@ -1,0 +1,12 @@
+Source: git-mysqldump
+Section: utils
+Priority: optional
+Maintainer: Chris Smith <chris@cs278.org>
+Build-Depends: @cdbs@
+Standards-Version: 3.8.4
+
+Package: git-mysqldump
+Architecture: any
+Depends: git-core (>= 1:1.4.4) | git (>= 1:1.4.4), bash (>= 4.0), coreutils (>= 5), mysql-client, ${misc:Depends}
+Description: Wrapper for mysqldump, using git for storage.
+ Eases the storage of MySQL backups in a git repository.
