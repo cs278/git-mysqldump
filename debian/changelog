@@ -1,3 +1,9 @@
+git-mysqldump (1.1-2) unstable; urgency=low
+
+  * Correct to architecture independent.
+
+ -- Chris Smith <chris@cs278.org>  Sat, 02 Apr 2011 23:33:11 +0100
+
 git-mysqldump (1.1-1) unstable; urgency=low
 
   * Initial Release.
